@@ -4,9 +4,100 @@ import time
 from flask import Flask, request, jsonify
 import openai
 from openai import OpenAI
-import functions
-
+import requests
 from packaging import version
+
+
+OPENAI_API_KEY = os.environ['OPENAI_API_KEY']
+AIRTABLE_API_KEY = os.environ['AIRTABLE_API_KEY']
+
+# Init OpenAI Client
+client = OpenAI(api_key=OPENAI_API_KEY)
+assistant_instructions = """
+   Role and Behavior: The GPT should interact in Saudi Arabic and help users choose the perfect dietary supplement for their health needs. It should be fun, engaging, and concise, smoothly asking follow-up questions to gather more information.
+
+   Tone and Style: Adopt a friendly and engaging tone, but ensure it is direct and concise. Use words like "ايش" instead of "شنو" and "مب" instead of "مش" to make the language more relatable to the Saudi audience.
+
+   Follow-Up Questions: Encourage the GPT to ask follow-up questions to gather more information from users, ensuring interactions are smooth and responses are accurate and relevant. For example:
+
+   "What are your health goals for the supplement?"
+   "Do you have any allergies to specific ingredients?"
+   "Are you currently following any specific diet?"
+   Focus on Specific Topics: Keep the discussion focused on dietary supplements and general health, avoiding topics beyond this scope to ensure relevance and usefulness. For instance:
+
+   "What supplements have you tried before, and how was your experience?"
+   "Do you exercise regularly?"
+   User Prompt Examples: Create example user prompts that evoke responses showcasing the GPT's unique behavior, ensuring they are directly targeted to the GPT's purpose. For example:
+
+   "I need a supplement to boost my energy throughout the day."
+   "What's the best supplement for strengthening the immune system?"
+   "I have a vitamin D deficiency, what do you recommend?"
+   "I want a supplement to improve my sleep."
+   Consultation Reminder: When recommending a dietary supplement, remind the user that the GPT is not a doctor and that it is wise to consult one, ensuring users are aware of the limitations. For instance:
+
+   This supplement is excellent for boosting energy, but it's best to consult your doctor before starting it."
+   "This supplement helps strengthen the immune system, but make sure to consult your doctor first."
+   Product Recommendations: When recommending products, provide links for easy purchase and a brief description of why the product is recommended, using global benchmarks and the latest innovations in the supplement industry as a basis. For example:
+
+   "I recommend Omega-3 supplement from XYZ brand because it’s great for heart health. [Link to purchase]"
+   "Vitamin C from ABC is known for strengthening the immune system. [Link to purchase]"
+   Cultural Tailoring: Adapt the GPT's language and cultural references to fit the target audience, ensuring it resonates well with users. For instance:
+
+   "This supplement is widely available in Saudi pharmacies."
+   "This product is very popular among people in Saudi Arabia."
+"""
+
+
+# Add lead to Airtable
+def create_lead(name, phone):
+    url = "https://api.airtable.com/v0/appM1yx0NobvowCAg/Accelerator%20Leads"
+    headers = {
+        "Authorization": AIRTABLE_API_KEY,
+        "Content-Type": "application/json"
+    }
+    data = {"records": [{"fields": {"Name": name, "Phone": phone}}]}
+    response = requests.post(url, headers=headers, json=data)
+    if response.status_code == 200:
+        print("Lead created successfully.")
+        return response.json()
+    else:
+        print(f"Failed to create lead: {response.text}")
+
+
+# Create or load assistant
+def create_assistant(client):
+    assistant_file_path = 'assistant.json'
+
+    # If there is an assistant.json file already, then load that assistant
+    if os.path.exists(assistant_file_path):
+        with open(assistant_file_path, 'r') as file:
+            assistant_data = json.load(file)
+            assistant_id = assistant_data['assistant_id']
+            print("Loaded existing assistant ID.")
+    else:
+        # If no assistant.json is present, create a new assistant using the below specifications
+
+        # To change the knowledge document, modify the file name below to match your document
+        # If you want to add multiple files, paste this function into ChatGPT and ask for it to add support for multiple files
+        file = client.files.create(file=open("knowledge.docx", "rb"),
+                                   purpose='assistants')
+
+        assistant = client.beta.assistants.create(
+            # Change prompting in prompts.py file
+            instructions=assistant_instructions,
+            model="gpt-4-1106-preview",
+            tools=[
+
+            ],
+)
+        # Create a new assistant.json file to load on future runs
+        with open(assistant_file_path, 'w') as file:
+            json.dump({'assistant_id': assistant.id}, file)
+            print("Created a new assistant and saved the ID.")
+
+        assistant_id = assistant.id
+
+    return assistant_id
 
 required_version = version.parse("1.1.1")
 current_version = version.parse(openai.__version__)
@@ -22,7 +113,7 @@ app = Flask(__name__)
 client = OpenAI(api_key=OPENAI_API_KEY)
 
 # Load assistant ID from file or create new one
-assistant_id = functions.create_assistant(client)
+assistant_id = create_assistant(client)
 print("Assistant created with ID:", assistant_id)
 # Create thread
 @app.route('/start', methods=['GET'])
@@ -91,7 +182,7 @@ def check_run_status():
         if tool_call.function.name == "create_lead":
           # Process lead creation
           arguments = json.loads(tool_call.function.arguments)
-          output = functions.create_lead(arguments["name"], arguments["phone"])
+          output = create_lead(arguments["name"], arguments["phone"])
           client.beta.threads.runs.submit_tool_outputs(thread_id=thread_id,
                                                        run_id=run_id,
                                                        tool_outputs=[{
